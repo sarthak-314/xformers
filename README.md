@@ -1,4 +1,4 @@
-<img src="./docs/assets/logo.png" width=800>
+<img src="./docs/assets/logo.png" width=600>
 
 ![PyPI](https://img.shields.io/pypi/v/xformers)
 ![PyPI - License](https://img.shields.io/pypi/l/xformers)
