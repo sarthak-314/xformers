@@ -1,4 +1,4 @@
-<img src="./docs/assets/logo.png" width=600>
+<img src="./docs/assets/xformers_logo.png" width=600>
 
 # X-Formers
 
