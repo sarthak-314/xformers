@@ -7,6 +7,7 @@
 - [What's New](#whats-new)
 - [Models](#models)
 - [Kaggle Notebooks](#kaggle-notebooks)
+- [Citing](#citing)
 
 ## What's New
 
@@ -18,3 +19,19 @@
 
 ## Kaggle Notebooks
 [ ] TODO: Add Kaggle notebooks here
+
+
+## Citing
+
+### BibTeX
+
+```bibtex
+@misc{rw2019timm,
+  author = {Sarthak Bhatt},
+  title = {X-formers},
+  year = {2022},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/sarthak-314/xformers}}
+}
+```
