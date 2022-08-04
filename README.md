@@ -26,7 +26,7 @@
 ### BibTeX
 
 ```bibtex
-@misc{rw2019timm,
+@misc{sb2022xformers,
   author = {Sarthak Bhatt},
   title = {X-formers},
   year = {2022},
