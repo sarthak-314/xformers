@@ -2,9 +2,19 @@
 
 # X-Formers
 
-`X-Formers` is a flax-based library for high-performance training of NLU models on the Kaggle TPUv3-8 hardware. It is built with performance and scalability in mind.
+`X-Formers` is a flax-based library for high-performance training of NLU models on TPUs. 
 
-Created on 4th August 2022
+- [What's New](#whats-new)
+- [Models](#models)
+- [Kaggle Notebooks](#kaggle-notebooks)
 
-## Notebooks
-[ ] TODO: Link notebooks using X-formers here
+## What's New
+
+### 5th August, 2022
+* Added my custom built deberta-long model
+
+## Models 
+* DeBERTa Long - https://arxiv.org/abs/2105.12723
+
+## Kaggle Notebooks
+[ ] TODO: Add Kaggle notebooks here
