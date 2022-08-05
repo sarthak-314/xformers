@@ -22,22 +22,20 @@ class WordEmbed(nn.Module):
     """
     num_embeddings: int
     features: int 
-    dtype: jnp.dtypes = jnp.float32
+    dtype: jnp.dtype
 
     def setup(self):
         self.embedding = param_with_axes(
             name='embedding',
             init_fn=jax.nn.initializers.zeros,
-            axes=('vocab', 'embed'),
+            axes=('vocab_size', 'hidden_size'),
         )
     
     def __call__(self, input_ids):
         """
         Embeds the input ids
-
         Args:
             input_ids: tokenized input ids of shape [batch_size, seq_len]
-        
         Returns:
             Embedded vectors of shape [batch_size, seq_len, features]
         """
@@ -46,7 +44,3 @@ class WordEmbed(nn.Module):
         embedding = jnp.asarray(self.embedding, dtype=self.dtype)
         output = jnp.dot(one_hot, embedding)
         return output
-
-
-class Config:
-    pass

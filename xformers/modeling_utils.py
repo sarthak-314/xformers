@@ -1,5 +1,6 @@
 from flax.linen import partitioning as nn_partitioning
 with_sharding_constraint = nn_partitioning.with_sharding_constraint
+remat = nn_partitioning.remat
 
 ACT2FN = {
 

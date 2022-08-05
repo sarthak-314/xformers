@@ -2,14 +2,8 @@ import jax.numpy as jnp
 import flax.linen as nn
 import jax
 
-import flax.linen.partitioning as nn_partitioning
-
-from xformers.modeling_utils import ACT2FN
+from xformers.modeling_utils import ACT2FN, with_sharding_constraint, ModelConfig
 from tensor_utils import split_into_blocks, concat_3_blocks
-
-with_sharding_constraint = nn_partitioning.with_sharding_constraint
-
-
 
 def make_log_bucket_position(relative_pos_matrix, num_buckets, max_position):
     """
@@ -35,6 +29,28 @@ def make_log_bucket_position(relative_pos_matrix, num_buckets, max_position):
     bucket_pos = jnp.where(abs_pos<=max_exact, relative_pos_matrix, log_pos*sign).astype(jnp.int32)
     return bucket_pos
 
+class SelfAttentionOutputPostLN(nn.Module):
+    config: ModelConfig
+    dtype: jnp.dtype
+
+    def setup(self):
+        self.output_proj = nn.Dense(
+            self.config.hidden_size,
+            use_bias=True,
+            kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            dtype=self.dtype,
+        )
+        self.layer_norm = nn.LayerNorm(self.config.layer_norm_epsilon, dtype=self.dtype)
+        self.dropout = nn.Dropout(self.config.hidden_dropout_rate)
+
+    def __call__(self, hidden_states, input_tensor):
+        hidden_states = self.output_proj(hidden_states)
+        hidden_states = self.layer_norm(hidden_states + input_tensor)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = with_sharding_constraint(hidden_states, ('batch_size', 'hidden_size'))
+        return hidden_states
+
+
 class FullSelfAttention(nn.Module):
     config: ModelConfig
     dtype: jnp.dtype
@@ -42,7 +58,7 @@ class FullSelfAttention(nn.Module):
     def setup(self):
         pass
 
-class LocalSelfAttention(nn.Module):
+class LocalSlidingWindowAttention(nn.Module):
     """
     Builds upon the LongT5 model.
     """
