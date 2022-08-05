@@ -1,7 +1,4 @@
 [ ] Add support for adversarial training
+[ ] Add support for SiFT and consistency training
 [ ] Add SAGE Optimizer
 [ ] Start writing documentation
-[ ] Master git
-[ ] Focus on Implementing
-
-[ ] Create a custom website 
