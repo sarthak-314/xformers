@@ -3,31 +3,7 @@ import flax.linen as nn
 import jax
 
 from xformers.modeling_utils import ACT2FN, with_sharding_constraint, ModelConfig
-from tensor_utils import split_into_blocks, concat_3_blocks
-
-def make_log_bucket_position(relative_pos_matrix, num_buckets, max_position):
-    """
-    Translate relative position to a log bucket relative position.
-    The relative position is defined as key_position - query_position, 
-    i.e. the distance in tokens from the attending position to the attended-to position.
-
-    We use smaller buckets for small absolute relative_position and larger buckets for larger absolute relative_positions. 
-    All relative positions >=max_distance map to the same bucket. 
-    All relative positions <=-max_distance map to the same bucket.
-    This should allow for more graceful generalization to longer sequences than the model has been trained on.    
-    """
-    sign = jnp.sign(relative_pos_matrix)
-    
-    # Half of the buckets are for exact increments in positions
-    max_exact = num_buckets // 2
-    is_pos_in_exact_range = (relative_pos_matrix < max_exact) & (relative_pos_matrix > -max_exact)
-    abs_pos = jnp.where(is_pos_in_exact_range, max_exact-1, jnp.abs(relative_pos_matrix))
-    
-    x = jnp.log((max_position - 1) / max_exact)
-    xx = jnp.log(abs_pos/max_exact) / x
-    log_pos = jnp.ceil(xx*(max_exact-1)) + max_exact
-    bucket_pos = jnp.where(abs_pos<=max_exact, relative_pos_matrix, log_pos*sign).astype(jnp.int32)
-    return bucket_pos
+from tensor_utils import split_into_blocks, concat_3_blocks, make_log_bucket_position
 
 
 class SelfAttentionOutput(nn.Module):
@@ -53,9 +29,10 @@ class SelfAttentionOutput(nn.Module):
         return hidden_states
 
 
-class LocalSlidingWindowAttention(nn.Module):
+class LocalSlidingWindow_DisentangledAttention(nn.Module):
     """
-    TODO: Write documentation
+    This implements self-attention, but only applied to a 
+    local window of `sliding_window_block_size` tokens.
     """
     config: ModelConfig
     dtype: jnp.dtype
@@ -64,7 +41,9 @@ class LocalSlidingWindowAttention(nn.Module):
         self.n_heads = self.config.num_attention_heads
         self.per_head_dim = self.config.hidden_size // self.config.num_attention_heads
         self.hidden_size = self.config.hidden_size
-        self.block_size = self.config.block_size
+        self.sliding_window_block_size = self.config.sliding_window_block_size
+        self.position_buckets = self.config.position_buckets
+        self.max_relative_positions = self.config.position_buckets
 
         self.query_proj = nn.Dense(
             self.hidden_size,
@@ -86,58 +65,41 @@ class LocalSlidingWindowAttention(nn.Module):
         )
         self.attention_dropout = nn.Dropout(self.config.attention_probs_dropout_prob)
         self.pos_dropout = nn.Dropout(self.config.hidden_dropout_prob)
-        self.position_buckets = self.config.position_buckets
-        self.max_relative_positions = self.config.position_buckets
+        
+        if not self.config.share_attention_key:
+            raise NotImplementedError("Not implemented yet")
 
-        self.output_proj = nn.Dense(
-            self.hidden_size,
-            use_bias=True,
-            kernel_init=jax.nn.initializers.normal(stddev=0.01),
-            dtype=self.dtype,
-        )
-        self.output_dropout = nn.Dropout(self.config.hidden_dropout_prob)
-        self.output_layernorm = nn.LayerNorm(self.config.layer_norm_eps)
+        self.output = SelfAttentionOutput(self.config, self.dtype)
 
     def _split_heads(self, x):
-        if x.ndim == 3:
-            batch_size, seq_len, hidden_dim = x.shape
-            new_x_shape = (batch_size, seq_len, self.n_heads, self.per_head_dim)
-            return x.reshape(new_x_shape)
-        
         new_x_shape = x.shape[:-1] + (self.n_heads, self.per_head_dim)
         return x.reshape(new_x_shape)
     
-    def __call__(
-        self, 
-        hidden_states,
-        rel_pos_embeddings=None,
-        deterministic=True,
-    ):
-        batch_size, seq_len, hidden_size = hidden_states.shape
+    def __call__(self, hidden_states, relative_position_embeddings, deterministic):
+        """
+        Args:
+            hidden_states: [batch_size, max_seq_len, hidden_size]
+            relative_position_embeddings: [num_relative_positions, hidden_size]
+        Returns:
+            hidden_states: [batch_size, max_seq_len, hidden_size]
+        """
+        batch_size, max_seq_len, hidden_size = hidden_states.shape
 
-        # (batch_size, seq_len, n_heads, per_head_dim)
+        # (batch_size, max_seq_len, n_heads, per_head_dim)
         content_query_layer = self._split_heads(self.query_proj(hidden_states))
         content_key_layer = self._split_heads(self.key_proj(hidden_states))
         content_value_layer = self._split_heads(self.value_proj(hidden_states))
 
         # Add sharding constraints
-        content_query_layer = with_sharding_constraint(
-            x=content_query_layer,
-            logical_axis_resources=('batch', 'length', 'heads', 'per_head_dim')
-        )
-        content_key_layer = with_sharding_constraint(
-            x=content_key_layer,
-            logical_axis_resources=('batch', 'length', 'heads', 'per_head_dim')
-        )
-        content_value_layer = with_sharding_constraint(
-            x=content_value_layer,
-            logical_axis_resources=('batch', 'length', 'heads', 'per_head_dim')
-        )
+        logical_axis_resources = ('batch_size', 'max_seq_len', 'n_heads', 'per_head_dim')
+        content_query_layer = with_sharding_constraint(content_query_layer, logical_axis_resources)
+        content_key_layer = with_sharding_constraint(content_key_layer, logical_axis_resources)
+        content_value_layer = with_sharding_constraint(content_value_layer, logical_axis_resources)
 
         # Split into blocks -> (batch_size, num_blocks, block_size, n_heads, per_head_dim)
-        content_query_layer = split_into_blocks(content_query_layer, self.block_size, axis=1)
-        content_key_layer = split_into_blocks(content_key_layer, self.block_size, axis=1)
-        content_value_layer = split_into_blocks(content_value_layer, self.block_size, axis=1)
+        content_query_layer = split_into_blocks(content_query_layer, self.sliding_window_block_size, axis=1)
+        content_key_layer = split_into_blocks(content_key_layer, self.sliding_window_block_size, axis=1)
+        content_value_layer = split_into_blocks(content_value_layer, self.sliding_window_block_size, axis=1)
 
         # Concatenate 3 blocks for keys and values
         # (batch_size, num_blocks, block_size*3, n_heads, per_head_dim)
@@ -151,9 +113,9 @@ class LocalSlidingWindowAttention(nn.Module):
         )
 
         # (2*max_relative_pos_embeddings, n_heads, per_head_dim)
-        rel_pos_embeddings = self.pos_dropout(rel_pos_embeddings, deterministic=deterministic)
-        pos_query_layer = self._split_heads(self.query_proj(rel_pos_embeddings))
-        pos_key_layer = self._split_heads(self.key_proj(rel_pos_embeddings))
+        relative_position_embeddings = self.pos_dropout(relative_position_embeddings, deterministic=deterministic)
+        pos_query_layer = self._split_heads(self.query_proj(relative_position_embeddings))
+        pos_key_layer = self._split_heads(self.key_proj(relative_position_embeddings))
         
         # Spread to batch size
         # (batch_size, 2*max_relative_pos_embeddings, n_heads, per_head_dim)
@@ -198,9 +160,9 @@ class LocalSlidingWindowAttention(nn.Module):
         p2c_attention_weights = jnp.take(p2c_attention_weights, p2c_pos_idx)
 
         # Compute attention probs my multiplying attention weights with values
-        scale = jnp.sqrt(self.per_head_dim * 3)
+        depth_scaling = jnp.sqrt(self.per_head_dim * 3)
         attention_weights = c2c_attention_weights + c2p_attention_weights + p2c_attention_weights
-        attention_weights /= scale
+        attention_weights /= depth_scaling
         
         attention_probs = jax.nn.softmax(attention_weights)
         attention_probs = self.attention_dropout(attention_probs, deterministic=deterministic)
@@ -213,12 +175,8 @@ class LocalSlidingWindowAttention(nn.Module):
         batch_size, num_blocks, block_size, n_heads, per_head_dim = context_layer.shape
         new_shape = (batch_size, num_blocks*block_size, n_heads*per_head_dim)
         context_layer = jnp.reshape(context_layer, new_shape)
-
-        # Output projection + Skip Connection + Post Layer normalization
-        context_layer = self.output_proj(context_layer)
-        context_layer = self.output_dropout(context_layer, deterministic=deterministic)
-        context_layer = self.output_layernorm(context_layer + hidden_states)
-        return context_layer
+        
+        return self.output(context_layer)
 
 
 class FullSelfAttention(nn.Module):

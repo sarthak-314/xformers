@@ -1,7 +1,7 @@
 [ ] Add support for adversarial training
 [ ] Add SAGE Optimizer
-[ ] Add a cool logo
 [ ] Start writing documentation
 [ ] Master git
+[ ] Focus on Implementing
 
 [ ] Create a custom website 

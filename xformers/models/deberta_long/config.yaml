@@ -20,6 +20,7 @@ intermediate_size: 4096
 num_hidden_layers: 24
 hidden_size: 1024
 
+share_attention_key: True
 vocab_size: 128100
 layer_norm_epsilon: 1e-7
 initializer_range: 0.02
