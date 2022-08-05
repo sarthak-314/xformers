@@ -29,7 +29,8 @@ def make_log_bucket_position(relative_pos_matrix, num_buckets, max_position):
     bucket_pos = jnp.where(abs_pos<=max_exact, relative_pos_matrix, log_pos*sign).astype(jnp.int32)
     return bucket_pos
 
-class SelfAttentionOutputPostLN(nn.Module):
+
+class SelfAttentionOutput(nn.Module):
     config: ModelConfig
     dtype: jnp.dtype
 
@@ -40,31 +41,24 @@ class SelfAttentionOutputPostLN(nn.Module):
             kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
             dtype=self.dtype,
         )
-        self.layer_norm = nn.LayerNorm(self.config.layer_norm_epsilon, dtype=self.dtype)
+        self.post_attention_layer_norm = nn.LayerNorm(self.config.layer_norm_epsilon, dtype=self.dtype)
         self.dropout = nn.Dropout(self.config.hidden_dropout_rate)
 
-    def __call__(self, hidden_states, input_tensor):
+    def __call__(self, hidden_states, input_tensor, deterministic):
+        hidden_states = with_sharding_constraint(hidden_states, ('batch_size', 'max_seq_len', 'hidden_size'))
         hidden_states = self.output_proj(hidden_states)
-        hidden_states = self.layer_norm(hidden_states + input_tensor)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = with_sharding_constraint(hidden_states, ('batch_size', 'hidden_size'))
+        hidden_states = self.post_attention_layer_norm(hidden_states + input_tensor)
+        hidden_states = self.dropout(hidden_states, deterministic=deterministic)
+        hidden_states = with_sharding_constraint(hidden_states, ('batch_size', 'max_seq_len', 'hidden_size'))
         return hidden_states
 
 
-class FullSelfAttention(nn.Module):
-    config: ModelConfig
-    dtype: jnp.dtype
-
-    def setup(self):
-        pass
-
 class LocalSlidingWindowAttention(nn.Module):
     """
-    Builds upon the LongT5 model.
+    TODO: Write documentation
     """
-
-    config: transformers.DebertaV2Config
-    dtype: jnp.dtype = jnp.float32
+    config: ModelConfig
+    dtype: jnp.dtype
 
     def setup(self):
         self.n_heads = self.config.num_attention_heads
@@ -172,8 +166,8 @@ class LocalSlidingWindowAttention(nn.Module):
         pos_key_layer = concat_3_blocks(pos_key_layer, block_axis=1, seq_axis=2, pad_value=0)
 
         # (block_size, 3*block_size)
-        query_position = jnp.arange(self.block_size, dtype=jnp.int32)[:, None]
-        key_position = jnp.arange(3*self.block_size, dtype=jnp.int32)[None, :]
+        query_position = jnp.arange(self.block_size, dtype=jnp.int32)[:, jnp.newaxis]
+        key_position = jnp.arange(3*self.block_size, dtype=jnp.int32)[jnp.newaxis, :]
         relative_pos_matrix = query_position - key_position
         relative_pos_matrix = make_log_bucket_position(
             relative_pos_matrix, 
@@ -225,3 +219,7 @@ class LocalSlidingWindowAttention(nn.Module):
         context_layer = self.output_dropout(context_layer, deterministic=deterministic)
         context_layer = self.output_layernorm(context_layer + hidden_states)
         return context_layer
+
+
+class FullSelfAttention(nn.Module):
+    pass

@@ -6,6 +6,7 @@ from xformers.modeling_utils import ACT2FN, ModelConfig, with_sharding_constrain
 from xformers.layers import WordEmbed
 from xformers.models.deberta_long.attention import FullSelfAttention, LocalSlidingWindowAttention
 
+
 class Embeddings(nn.Module):
     config: ModelConfig
     dtype: jnp.dtype
@@ -97,6 +98,7 @@ class EncoderLayer(nn.Module):
         layer_output = with_sharding_constraint(layer_output, ('batch_size', 'max_seq_len', 'hidden_size'))
         return layer_output
 
+
 class Encoder(nn.Module):
     config: ModelConfig
     dtype: jnp.dtype
@@ -146,6 +148,7 @@ class Encoder(nn.Module):
         hidden_states = with_sharding_constraint(hidden_states, ('batch_size', 'max_seq_len', 'hidden_size'))
         return hidden_states
 
+
 class Backbone(nn.Module):
     config: ModelConfig
     dtype: jnp.dtype
@@ -153,68 +156,20 @@ class Backbone(nn.Module):
     def setup(self):
         self.embeddings = Embeddings(self.config, self.dtype)
         self.encoder = Encoder(self.config, self.dtype)
-        self.pooler = Pooler(self.config, self.dtype)
 
-    def __call__(self, inputs_embeds, attention_mask, deterministic=False):
-        hidden_states = self.embeddings(inputs_embeds)
-        hidden_states = self.encoder(hidden_states, attention_mask, deterministic=deterministic)
-        sequence_output = self.pooler(hidden_states)
-        return sequence_output
+    def __call__(self, input_ids, attention_mask, deterministic=False):
+        input_ids = with_sharding_constraint(input_ids, ('batch_size', 'max_seq_len'))
 
-
-
-class DebertaLongBackbone(nn.Module):
-    config: transformers.DebertaV2Config
-    dtype: jnp.dtype = jnp.float32
-
-    def setup(self):
-        self.word_embeddings = nn.Embed(
-            num_embeddings=self.config.vocab_size,
-            features=self.config.hidden_size,
-            embedding_init=jax.nn.initializers.normal(self.config.initializer_range),
+        embedding_output = self.embeddings(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            deterministic=deterministic,
         )
-        self.word_embeddings_layer_norm = nn.LayerNorm(self.config.layer_norm_eps)
-        self.word_embeddings_dropout = nn.Dropout(self.config.hidden_dropout_prob)
 
-        num_relative_position_embeddings = self.config.position_buckets*2
-        print('num_relative_position_embeddings:', num_relative_position_embeddings)
-        self.relative_position_embeddings = nn.Embed(
-            num_embeddings=num_relative_position_embeddings,
-            features=self.config.hidden_size,
-            embedding_init=jax.nn.initializers.normal(self.config.initializer_range),
+        encoder_outputs = self.encoder(
+            inputs_embeds=embedding_output,
+            attention_mask=attention_mask,
+            deterministic=deterministic,
         )
-        self.relative_position_embeddings_layer_norm = nn.LayerNorm(self.config.layer_norm_eps)
-        
-        self.layers = [
-            DebertaLongLayer(self.config, self.dtype)
-            for _ in range(self.config.num_hidden_layers)
-        ]
-        
-    def __call__(self, input_ids, deterministic=True):
-        inputs_embeds = self.word_embeddings(input_ids)
-        inputs_embeds = with_sharding_constraint(
-            x=inputs_embeds,
-            logical_axis_resources=('batch', 'length', 'embed'),
-        )
-        inputs_embeds = self.word_embeddings_layer_norm(inputs_embeds)
-        inputs_embeds = self.word_embeddings_dropout(inputs_embeds, deterministic=deterministic)
-
-        rel_pos_embeddings = self.relative_position_embeddings_layer_norm(
-            self.relative_position_embeddings.embedding
-        )
-        
-        hidden_states = inputs_embeds
-        for layer in self.layers:
-            hidden_states = layer(
-                hidden_states=hidden_states,
-                rel_pos_embeddings=rel_pos_embeddings,
-                deterministic=deterministic,
-            )
-        return hidden_states
-
-
-
-
-
-
-
+        encoder_outputs = with_sharding_constraint(encoder_outputs, ('batch_size', 'max_seq_len', 'hidden_size'))
+        return encoder_outputs
