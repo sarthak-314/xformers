@@ -16,7 +16,7 @@
 * Added my custom built deberta-long model
 
 ## Models 
-* DeBERTa Long - https://arxiv.org/abs/2105.12723
+* DeBERTa Long - Extended the original DeBERTa-V3 model with support for XLA compilation, long range modeling and tensor partioning
 
 ## Kaggle Notebooks
 [ ] TODO: Add Kaggle notebooks here
