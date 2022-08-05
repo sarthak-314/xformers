@@ -1,0 +1,23 @@
+# Relative Position Embeddings
+max_relative_position_embeddings: 512
+position_buckets: 256
+
+# Self-Attention
+attention_probs_dropout_rate: 0.10
+num_attention_heads: 16
+num_hidden_layers: 24
+hidden_size: 1024
+
+self_attention_type: 'sliding_windo' # 'sliding_window'
+sliding_window_block_size: 512
+
+# Intermediate MLP
+hidden_dropout_rate: 0.10
+hidden_activation: 'gelu'
+intermediate_dim: 4096
+intermediate_dropout_rate: 0.10
+
+# Misc
+vocab_size: 128100
+layer_norm_epsilon: 1e-7
+initializer_range: 0.02

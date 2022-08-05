@@ -12,6 +12,7 @@
 ## What's New
 
 ### 5th August, 2022
+* Working on Adding METRO and Moe
 * Added my custom built deberta-long model
 
 ## Models 

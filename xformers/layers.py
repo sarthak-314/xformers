@@ -1,49 +1,52 @@
-
-import flax.linen as nn
 import jax.numpy as jnp
+import flax.linen as nn
+
+import flax 
 import jax
 
-import flax.linen.partitioning as nn_partitioning
+from flax.linen import partitioning as nn_partitioning
 param_with_axes = nn_partitioning.param_with_axes
-
+with_sharding_constraint = nn_partitioning.with_sharding_constraint
 
 class WordEmbed(nn.Module):
-  """
-  Word Embedding Layer to map integers [0, vocab_size] to d-dimensional vectors.
-  
-  Attributes:
-    num_embeddings: number of embeddings (vocab_size).
-    features: number of feature dimensions for each embedding.
-    dtype: the dtype of the embedding vectors (default: float32).
-    one_hot: performs the gather with a one-hot contraction rather than a true
-      gather. This is currently needed for SPMD partitioning.
-  """
-  num_embeddings: int
-  features: int
-  dtype: jnp.dtype = jnp.float32
-  one_hot: bool = False
-
-  def setup(self):
-    self.embedding = param_with_axes(
-        'embedding',
-        jax.nn.initializers.glorot_uniform,
-        (self.num_embeddings, self.features),
-        dtype=self.dtype,
-        axes=('vocab', 'embed'),
-    )
-
-  def __call__(self, input_ids):
     """
-    Embeds the input tokens using the embedding matrix.
-    Args:
-        input_ids: input tokens as integers.
-    Returns:
-        Embedded input tokens with an additional `features` dimension appended.
+    Map token ids from integers [0, vocab_size] to d-dimensional vectors.
+    
+    Performs the gather with one-hot contraction rather than true gather
+    because it's needed for SPMD partitioning.
+
+    Attributes:
+        num_embeddings: number of embeddings (vocab_size)
+        features: number of feature dimensions (d)
+        dtype: the dtype of the embedding vectors
     """
-    # iota is an array of sequential indices
-    iota = jax.lax.iota(jnp.int32, self.num_embeddings)
-    one_hot = jnp.array(input_ids[..., None] == iota, dtype=self.dtype)
-    output = jnp.dot(one_hot, jnp.asarray(self.embedding, self.dtype))
-    return output
+    num_embeddings: int
+    features: int 
+    dtype: jnp.dtypes = jnp.float32
+
+    def setup(self):
+        self.embedding = param_with_axes(
+            name='embedding',
+            init_fn=jax.nn.initializers.zeros,
+            axes=('vocab', 'embed'),
+        )
+    
+    def __call__(self, input_ids):
+        """
+        Embeds the input ids
+
+        Args:
+            input_ids: tokenized input ids of shape [batch_size, seq_len]
+        
+        Returns:
+            Embedded vectors of shape [batch_size, seq_len, features]
+        """
+        iota_arange = jax.lax.iota(dtype=jnp.int32, size=self.num_embeddings)
+        one_hot = jnp.array(input_ids[..., jnp.newaxis]==iota_arange, dtype=self.dtype)
+        embedding = jnp.asarray(self.embedding, dtype=self.dtype)
+        output = jnp.dot(one_hot, embedding)
+        return output
 
 
+class Config:
+    pass
